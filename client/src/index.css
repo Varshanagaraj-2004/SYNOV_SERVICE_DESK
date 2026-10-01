@@ -1,0 +1,55 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+@import "tailwindcss";
+@theme {
+  --color-brand-purple: #7B3F9E;
+  --color-brand-blue: #2E5AA8;
+
+  --color-surface-page: #F5F6FA;
+  --color-surface-card: #FFFFFF;
+  --color-surface-border: #E5E7EB;
+  --color-surface-muted: #F1F2F6;
+
+  --color-text-primary: #1E293B;
+  --color-text-secondary: #64748B;
+
+  --color-status-critical: #DC2626;
+  --color-status-high: #EA580C;
+  --color-status-medium: #D97706;
+  --color-status-low: #6B7280;
+  --color-status-unassigned: #64748B;
+  --color-status-assigned: #2563EB;
+  --color-status-closed: #16A34A;
+  --color-status-cancelled: #9CA3AF;
+  --color-status-reassigned: #7C3AED;
+
+  --font-sans: "Inter", "Segoe UI", system-ui, sans-serif;
+}
+
+@layer base {
+  button:not(:disabled), [role="button"]:not(:disabled), a[href], summary, select:not(:disabled), label[for], input[type="checkbox"]:not(:disabled), input[type="radio"]:not(:disabled), input[type="file"]:not(:disabled), input[type="date"]:not(:disabled) { cursor: pointer; }
+  button:disabled, select:disabled, input:disabled, textarea:disabled { cursor: not-allowed; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--color-brand-purple); box-shadow: 0 0 0 3px rgb(123 63 158 / 0.2); }
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #analytics-print-area, #analytics-print-area * {
+    visibility: visible;
+  }
+  #analytics-print-area {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+  }
+  .report-export-block {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  @page {
+    size: landscape;
+    margin: 12mm;
+  }
+}
