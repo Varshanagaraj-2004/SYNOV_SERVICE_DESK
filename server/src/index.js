@@ -37,4 +37,5 @@ void checkDependency('Inventory', 'INVENTORY_API_URL');
 void checkDependency('CRM', 'CRM_LOGIN_URL');
 
 const PORT = process.env.PORT || 5000;
+// Listen on all network interfaces so other computers on the LAN can connect.
 app.listen(PORT, '0.0.0.0', () => logger.info({ port: PORT }, 'Server started'));

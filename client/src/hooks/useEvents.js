@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import axiosClient from "../api/axiosClient";
 import { createSseToken } from "../api/auth";
 import { useAuth } from "../context/useAuth";
 
@@ -46,7 +45,7 @@ export default function useEvents() {
       try {
         const { token: streamToken } = await createSseToken();
         if (stopped) return;
-        const streamUrl = new URL(`${axiosClient.defaults.baseURL}/events`, window.location.origin);
+        const streamUrl = new URL("/api/events", window.location.origin);
         streamUrl.searchParams.set("token", streamToken);
         source = new EventSource(streamUrl.toString());
         source.addEventListener("open", () => {

@@ -2,7 +2,7 @@ const bcrypt = require('bcryptjs');
 const { createHash, randomBytes } = require('node:crypto');
 const User = require('../models/User');
 const { generatePassword } = require('../utils/generatePassword');
-const { clientUserProvisionedEmail, passwordResetEmail } = require('../services/emailService');
+const { clientUserProvisionedEmail, passwordResetEmail, getFrontendUrl } = require('../services/emailService');
 
 function canManageClientUsers(req, res) {
   if (req.user.role === 'admin' || (req.user.role === 'client' && req.user.isCompanyAdmin === true)) {
@@ -132,10 +132,7 @@ async function verifyClientUser(req, res) {
   target.passwordResetExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
   await target.save();
 
-  const frontendUrl = (process.env.FRONTEND_URL || '')
-    .split(',')[0]
-    .trim()
-    .replace(/\/+$/, '');
+  const frontendUrl = getFrontendUrl(req);
   const resetUrl = `${frontendUrl}/reset-password?token=${encodeURIComponent(token)}`;
   void passwordResetEmail(target, resetUrl);
 

@@ -1,6 +1,9 @@
 require('dotenv').config();
 require('./utils/checkSecrets')(process.env.JWT_SECRET);
 
+const fs = require('node:fs');
+const net = require('node:net');
+const path = require('node:path');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -23,13 +26,67 @@ const logger = require('./utils/logger');
 const pinoHttp = require('pino-http');
 
 const app = express();
-const allowedOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || '')
+const extraAllowedOrigins = new Set((process.env.CORS_ORIGINS || '')
 	.split(',')
 	.map((origin) => origin.trim())
-	.filter(Boolean);
+	.filter(Boolean)
+	.map((origin) => {
+		try {
+			return new URL(origin).origin;
+		} catch {
+			return '';
+		}
+	})
+	.filter(Boolean));
+
+function isLocalNetworkOrigin(origin) {
+	if (!origin) return false;
+
+	try {
+		const url = new URL(origin);
+		if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+
+		const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+		if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local')) {
+			return true;
+		}
+
+		if (net.isIP(hostname) === 4) {
+			const [first, second] = hostname.split('.').map(Number);
+			return first === 10
+				|| first === 127
+				|| (first === 169 && second === 254)
+				|| (first === 172 && second >= 16 && second <= 31)
+				|| (first === 192 && second === 168);
+		}
+
+		if (net.isIP(hostname) === 6) {
+			return hostname === '::1'
+				|| /^f[cd]/i.test(hostname)
+				|| /^fe[89ab]/i.test(hostname);
+		}
+	} catch {
+		return false;
+	}
+
+	return false;
+}
 
 app.use(helmet());
-app.use(cors({ origin: allowedOrigins }));
+app.use((req, res, next) => {
+	const origin = req.get('origin');
+	if (!origin) return next();
+
+	let normalizedOrigin;
+	try {
+		normalizedOrigin = new URL(origin).origin;
+	} catch {
+		return next();
+	}
+
+	const allowed = isLocalNetworkOrigin(normalizedOrigin) || extraAllowedOrigins.has(normalizedOrigin);
+	return cors({ origin: allowed ? normalizedOrigin : false })(req, res, next);
+});
 app.use(pinoHttp({
 	logger: logger.pino,
 	serializers: {
@@ -69,6 +126,20 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/crm', crmRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+
+app.use('/api', (req, res) => res.status(404).json({ error: 'Route not found' }));
+
+const clientDistPath = path.resolve(__dirname, '../../client/dist');
+const clientIndexPath = path.join(clientDistPath, 'index.html');
+if (fs.existsSync(clientIndexPath)) {
+	app.use(express.static(clientDistPath));
+	app.get(/^\/(?!api(?:\/|$)).*/, (req, res, next) => {
+		if (!req.accepts('html')) return next();
+		return res.sendFile(clientIndexPath, (error) => {
+			if (error) next(error);
+		});
+	});
+}
 
 app.use((req, res) => res.status(404).json({ error: 'Route not found' }));
 

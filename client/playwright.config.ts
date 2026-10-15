@@ -1,15 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
-import { loadEnv } from 'vite';
 
 const baseURL = 'http://127.0.0.1:5173';
-const apiURL = loadEnv('development', process.cwd(), 'VITE_').VITE_API_URL;
+const apiHealthURL = 'http://127.0.0.1:5000/api/health';
 const testMongoUri = process.env.MONGO_URI_TEST;
 const testJwtSecret = process.env.JWT_SECRET || 'playwright-test-secret-at-least-32-characters';
 
 if (!testMongoUri) throw new Error('Set MONGO_URI_TEST to a dedicated test database before running Playwright.');
-if (!apiURL) throw new Error('Set VITE_API_URL in the client environment before running Playwright.');
-
-const apiHealthURL = `${apiURL.replace(/\/$/, '')}/health`;
 
 export default defineConfig({
   testDir: './tests',
@@ -62,7 +58,6 @@ export default defineConfig({
       url: baseURL,
       reuseExistingServer: !process.env.CI,
       timeout: 120000,
-      env: { VITE_API_URL: apiURL },
     },
   ],
 });

@@ -3,7 +3,7 @@ const jwt = require('jsonwebtoken');
 const { createHash, randomBytes } = require('node:crypto');
 const Company = require('../models/Company');
 const User = require('../models/User');
-const { passwordResetEmail } = require('../services/emailService');
+const { passwordResetEmail, getFrontendUrl } = require('../services/emailService');
 
 function signUserToken(user) {
   return jwt.sign(
@@ -97,10 +97,7 @@ async function forgotPassword(req, res) {
     user.passwordResetExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
     await user.save();
 
-    const frontendUrl = (process.env.FRONTEND_URL || '')
-      .split(',')[0]
-      .trim()
-      .replace(/\/+$/, '');
+    const frontendUrl = getFrontendUrl(req);
     const resetUrl = `${frontendUrl}/reset-password?token=${encodeURIComponent(token)}`;
     void passwordResetEmail(user, resetUrl);
   }

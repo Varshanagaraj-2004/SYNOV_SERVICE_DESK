@@ -797,13 +797,13 @@ async function updateTicketStatus(req, res) {
   }).catch((error) => {
     logger.error('Failed to publish ticket update event:', error.stack || error);
   });
-  if (assignmentChanged) void ticketAssignedTechnicianEmail(ticket, technician);
+  if (assignmentChanged) void ticketAssignedTechnicianEmail(ticket, technician, req);
   if (!wasClosed && nextStatus === 'Closed') {
     void (async () => {
       const requester = ticket.requester
         ? await User.findById(ticket.requester).select('email name')
         : null;
-      return ticketClosedClientEmail(ticket, requester?.email);
+      return ticketClosedClientEmail(ticket, requester?.email, req);
     })().catch(() => {
       logger.warn('Ticket closure email skipped because the requester could not be loaded.');
     });
@@ -893,7 +893,8 @@ async function reopenTicket(req, res) {
     ticket,
     technician?.active === false ? null : technician,
     req.user.name,
-    reason
+    reason,
+    req
   );
 
   return res.json({ ...ticket.toObject(), canReopen: false });

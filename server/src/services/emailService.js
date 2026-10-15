@@ -78,8 +78,38 @@ function getClientRecipients(ticket, requesterEmail) {
     .filter(Boolean))];
 }
 
-function getTicketUrl(ticketId) {
-  return `${(process.env.FRONTEND_URL || '').replace(/\/$/, '')}/tickets/${ticketId}`;
+function getFrontendUrl(req) {
+  const origin = req?.get?.('origin') || req?.headers?.origin;
+  if (origin) {
+    try {
+      const parsedOrigin = new URL(origin);
+      if (parsedOrigin.protocol === 'http:' || parsedOrigin.protocol === 'https:') {
+        return parsedOrigin.origin;
+      }
+    } catch {
+      // Use the Host header or configured fallback if Origin is invalid.
+    }
+  }
+
+  const host = req?.get?.('host') || req?.headers?.host;
+  if (host) {
+    const protocol = req.protocol === 'https' ? 'https:' : 'http:';
+    try {
+      return new URL(`${protocol}//${host}`).origin;
+    } catch {
+      // Use the configured fallback if Host is invalid.
+    }
+  }
+
+  if (req) {
+    throw new Error('Unable to build an email link without a valid request Origin or Host header.');
+  }
+
+  return (process.env.FRONTEND_URL || '').split(',')[0].trim().replace(/\/+$/, '');
+}
+
+function getTicketUrl(ticketId, req) {
+  return `${getFrontendUrl(req)}/tickets/${ticketId}`;
 }
 
 async function sendEmail({ to, subject, text, html, quiet = false }) {
@@ -156,9 +186,9 @@ async function ticketRaisedInternalEmail(ticket) {
   });
 }
 
-async function ticketAssignedTechnicianEmail(ticket, technician) {
+async function ticketAssignedTechnicianEmail(ticket, technician, req) {
   const ticketId = ticket.ticketNumber || ticket._id.toString();
-  const ticketUrl = getTicketUrl(ticket._id);
+  const ticketUrl = getTicketUrl(ticket._id, req);
   return sendEmail({
     to: technician.email,
     subject: `Ticket #${ticketId} assigned to you`,
@@ -167,9 +197,9 @@ async function ticketAssignedTechnicianEmail(ticket, technician) {
   });
 }
 
-async function ticketReopenedTechnicianEmail(ticket, technician, actorName, reason) {
+async function ticketReopenedTechnicianEmail(ticket, technician, actorName, reason, req) {
   const ticketId = ticket.ticketNumber || ticket._id.toString();
-  const ticketUrl = getTicketUrl(ticket._id);
+  const ticketUrl = getTicketUrl(ticket._id, req);
   const recipients = [...new Set([
     technician?.email,
     ...getRecipients(process.env.IT_TEAM_EMAIL),
@@ -190,9 +220,9 @@ View ticket: ${ticketUrl}`,
   });
 }
 
-async function ticketClosedClientEmail(ticket, requesterEmail) {
+async function ticketClosedClientEmail(ticket, requesterEmail, req) {
   const ticketId = ticket.ticketNumber || ticket._id.toString();
-  const ticketUrl = getTicketUrl(ticket._id);
+  const ticketUrl = getTicketUrl(ticket._id, req);
   return sendEmail({
     to: getClientRecipients(ticket, requesterEmail),
     subject: `Ticket #${ticketId} has been closed`,
@@ -233,4 +263,5 @@ module.exports = {
   clientUserProvisionedEmail,
   passwordResetEmail,
   slaAlertEmail,
+  getFrontendUrl,
 };
