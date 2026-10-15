@@ -20,9 +20,12 @@ async function getAssets(req, res) {
   const filters = [];
 
   if (role === 'client') {
+    if (!companyId) {
+      return res.json({ items: [], total: 0, page: 1, pages: 0 });
+    }
     filters.push({ companyId });
   }
-  if (req.query.companyId) {
+  if (role !== 'client' && req.query.companyId) {
     if (!mongoose.isValidObjectId(req.query.companyId)) return res.status(400).json({ error: 'Invalid companyId' });
     filters.push({ companyId: new mongoose.Types.ObjectId(req.query.companyId) });
   }

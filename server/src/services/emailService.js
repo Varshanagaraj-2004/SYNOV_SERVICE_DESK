@@ -82,11 +82,11 @@ function getTicketUrl(ticketId) {
   return `${(process.env.FRONTEND_URL || '').replace(/\/$/, '')}/tickets/${ticketId}`;
 }
 
-async function sendEmail({ to, subject, text, html }) {
+async function sendEmail({ to, subject, text, html, quiet = false }) {
   const recipients = Array.isArray(to) ? to : [to];
   const validRecipients = recipients.filter(Boolean);
   if (!validRecipients.length) {
-    logger.warn(`Email skipped for "${subject}": no recipient address provided.`);
+    if (!quiet) logger.warn(`Email skipped for "${subject}": no recipient address provided.`);
     return false;
   }
 
@@ -99,10 +99,10 @@ async function sendEmail({ to, subject, text, html }) {
       text,
       html,
     });
-    logger.info(`Email sent - "${subject}" to ${validRecipients.join(', ')}`);
+    if (!quiet) logger.info(`Email sent - "${subject}" to ${validRecipients.join(', ')}`);
     return true;
   } catch (error) {
-    logger.error({ err: error }, 'Email delivery failed');
+    if (!quiet) logger.error({ err: error }, 'Email delivery failed');
     return false;
   }
 }
@@ -201,12 +201,17 @@ async function ticketClosedClientEmail(ticket, requesterEmail) {
   });
 }
 
-async function clientUserProvisionedEmail(user, plainPassword) {
+async function clientUserProvisionedEmail(user, plainPassword, loginUrl, { quiet = false } = {}) {
+  const loginInstructions = loginUrl ? `\n\nLog in: ${loginUrl}` : '';
+  const loginLink = loginUrl
+    ? `<p><a href="${escapeHtml(loginUrl)}">Log in to Synov Service Desk</a></p>`
+    : '';
   return sendEmail({
     to: user.email,
     subject: 'Your Synov Service Desk login credentials',
-    text: `An account has been created for you on the Synov Service Desk.\n\nLogin email: ${user.email}\nPassword: ${plainPassword}\n\nPlease log in and keep these credentials safe.`,
-    html: `<p>An account has been created for you on the Synov Service Desk.</p><p><strong>Login email:</strong> ${user.email}</p><p><strong>Password:</strong> ${plainPassword}</p><p>Please log in and keep these credentials safe.</p>`,
+    text: `An account has been created for you on the Synov Service Desk.\n\nLogin email: ${user.email}\nPassword: ${plainPassword}${loginInstructions}\n\nPlease log in and keep these credentials safe.`,
+    html: `<p>An account has been created for you on the Synov Service Desk.</p><p><strong>Login email:</strong> ${escapeHtml(user.email)}</p><p><strong>Password:</strong> ${escapeHtml(plainPassword)}</p>${loginLink}<p>Please log in and keep these credentials safe.</p>`,
+    quiet,
   });
 }
 

@@ -29,6 +29,8 @@ const Message = require('../src/models/Message');
 const Ticket = require('../src/models/Ticket');
 const TicketActivity = require('../src/models/TicketActivity');
 const User = require('../src/models/User');
+const emailService = require('../src/services/emailService');
+const { syncCrmCustomer } = require('../src/services/crmUserSync');
 const {
   createTicketFromEmail,
   looksLikeAutoReply,
@@ -110,6 +112,134 @@ describe('API integration', () => {
     assert.equal(failure.status, 401);
   });
 
+  it('returns only the authenticated client company inventory and ignores client company filters', async () => {
+    const originalFetch = global.fetch;
+    const originalInventoryUrl = process.env.INVENTORY_API_URL;
+    process.env.INVENTORY_API_URL = 'https://inventory.test';
+    await Company.updateOne({ _id: fixtures.company._id }, { $set: { crmId: 'crm-northwind' } });
+    await Company.updateOne({ _id: fixtures.otherCompany._id }, { $set: { crmId: 'crm-contoso' } });
+    const inventory = [
+      {
+        assetId: 'northwind-rented',
+        customerId: 'crm-northwind',
+        customerName: 'Forged customer name',
+        productName: 'Laptop',
+        productDescription: 'Company laptop',
+        serialNumber: 'NW-1',
+        model: 'Model A',
+        customerLocation: 'Seattle',
+        location: 'Main Warehouse',
+        purchaseCost: 1000,
+        vendor: 'Private Vendor',
+        internalNotes: 'Private',
+        status: 'rented',
+      },
+      { assetId: 'northwind-sold', customerId: 'crm-northwind', status: 'sold' },
+      { assetId: 'contoso-rented', customerId: 'crm-contoso', status: 'rented' },
+      { assetId: 'warehouse-stock', status: 'available' },
+    ];
+    global.fetch = async () => ({ ok: true, status: 200, json: async () => inventory });
+
+    try {
+      const northwind = await request(app)
+        .get('/api/crm/inventory-assets?company=Contoso&companyId=not-northwind')
+        .set('Authorization', auth(fixtures.client));
+      const contoso = await request(app)
+        .get('/api/crm/inventory-assets')
+        .set('Authorization', auth(fixtures.otherClient));
+
+      assert.equal(northwind.status, 200);
+      assert.deepEqual(northwind.body.map((asset) => asset.assetId), ['northwind-rented', 'northwind-sold']);
+      assert.equal(northwind.body[0].customerName, fixtures.company.companyName);
+      assert.equal(northwind.body[0].productDescription, 'Company laptop');
+      assert.equal(northwind.body[0].location, 'Seattle');
+      assert.equal('purchaseCost' in northwind.body[0], false);
+      assert.equal('vendor' in northwind.body[0], false);
+      assert.equal('internalNotes' in northwind.body[0], false);
+      assert.deepEqual(contoso.body.map((asset) => asset.assetId), ['contoso-rented']);
+    } finally {
+      global.fetch = originalFetch;
+      if (originalInventoryUrl === undefined) delete process.env.INVENTORY_API_URL;
+      else process.env.INVENTORY_API_URL = originalInventoryUrl;
+    }
+  });
+
+  it('returns an empty inventory list when the client company has no inventory match or no company id', async () => {
+    const originalFetch = global.fetch;
+    const originalInventoryUrl = process.env.INVENTORY_API_URL;
+    process.env.INVENTORY_API_URL = 'https://inventory.test';
+    const unmatchedCompany = await Company.create({ companyName: 'Unmatched Company' });
+    const unmatchedClient = await User.create({
+      name: 'Unmatched Client',
+      email: 'unmatched@service.test',
+      passwordHash: await bcrypt.hash(password, 4),
+      role: 'client',
+      companyId: unmatchedCompany._id,
+    });
+    const noCompanyClient = await User.create({
+      name: 'No Company Client',
+      email: 'no-company@service.test',
+      passwordHash: await bcrypt.hash(password, 4),
+      role: 'client',
+    });
+    global.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => [{ assetId: 'northwind-rented', customerName: 'Northwind', status: 'rented' }],
+    });
+
+    try {
+      const unmatched = await request(app)
+        .get('/api/crm/inventory-assets')
+        .set('Authorization', auth(unmatchedClient));
+      const noCompany = await request(app)
+        .get('/api/crm/inventory-assets')
+        .set('Authorization', auth(noCompanyClient));
+
+      assert.equal(unmatched.status, 200);
+      assert.deepEqual(unmatched.body, []);
+      assert.equal(noCompany.status, 200);
+      assert.deepEqual(noCompany.body, []);
+    } finally {
+      global.fetch = originalFetch;
+      if (originalInventoryUrl === undefined) delete process.env.INVENTORY_API_URL;
+      else process.env.INVENTORY_API_URL = originalInventoryUrl;
+    }
+  });
+
+  it('preserves full inventory results for admin and forbids clients from fetching another company asset', async () => {
+    const originalFetch = global.fetch;
+    const originalInventoryUrl = process.env.INVENTORY_API_URL;
+    process.env.INVENTORY_API_URL = 'https://inventory.test';
+    const inventory = [
+      { assetId: 'warehouse-stock', status: 'available', purchaseCost: 1000 },
+      { assetId: 'contoso-rented', customerName: 'Contoso', status: 'rented' },
+    ];
+    global.fetch = async () => ({ ok: true, status: 200, json: async () => inventory });
+    const otherAsset = await Asset.create({
+      assetName: 'Contoso Laptop',
+      serialNumber: 'CONTOSO-1',
+      companyId: fixtures.otherCompany._id,
+    });
+
+    try {
+      const adminResponse = await request(app)
+        .get('/api/crm/inventory-assets')
+        .set('Authorization', auth(fixtures.admin));
+      const clientResponse = await request(app)
+        .get(`/api/assets/${otherAsset._id}`)
+        .set('Authorization', auth(fixtures.client));
+
+      assert.equal(adminResponse.status, 200);
+      assert.deepEqual(adminResponse.body, inventory);
+      assert.equal(clientResponse.status, 403);
+    } finally {
+      global.fetch = originalFetch;
+      if (originalInventoryUrl === undefined) delete process.env.INVENTORY_API_URL;
+      else process.env.INVENTORY_API_URL = originalInventoryUrl;
+    }
+  });
+
   it('returns a fresh login-equivalent token after changing a password', async () => {
     const response = await request(app).patch('/api/auth/change-password')
       .set('Authorization', auth(fixtures.client))
@@ -137,6 +267,90 @@ describe('API integration', () => {
 
     assert.equal(unverified.status, 401);
     assert.deepEqual(unverified.body, invalid.body);
+  });
+
+  it('syncs a CRM contact idempotently without changing its password or resending credentials', async () => {
+    const originalProvisionedEmail = emailService.clientUserProvisionedEmail;
+    let provisionedEmailCount = 0;
+    emailService.clientUserProvisionedEmail = async () => {
+      provisionedEmailCount += 1;
+    };
+
+    try {
+      const customer = {
+        _id: 'crm-customer-123',
+        companyName: 'CRM Northwind',
+        state: 'Karnataka',
+        billToAddress: {
+          addressLine1: '10 Main Road',
+          city: 'Bengaluru',
+          state: 'Karnataka',
+          pincode: '560001',
+          country: 'India',
+        },
+        contacts: [{
+          name: 'CRM Contact',
+          email: 'CRM.Contact@northwind.test',
+          phone: '+91 1234567890',
+          designation: 'IT',
+        }],
+      };
+
+      const firstSync = await syncCrmCustomer(customer);
+      await new Promise((resolve) => setImmediate(resolve));
+      const firstUser = await User.findOne({ email: 'crm.contact@northwind.test' });
+      const originalPasswordHash = firstUser.passwordHash;
+      customer.contacts[0].name = 'Changed CRM Contact';
+      customer.contacts[0].email = 'CRM.Contact@northwind.test';
+      const secondSync = await syncCrmCustomer(customer);
+      const users = await User.find({ email: 'crm.contact@northwind.test' });
+
+      assert.equal(firstSync.created, true);
+      assert.equal(secondSync.created, false);
+      assert.equal(String(firstSync.company._id), String(secondSync.company._id));
+      assert.equal(users.length, 1);
+      assert.equal(users[0].passwordHash, originalPasswordHash);
+      assert.equal(users[0].name, 'CRM Contact');
+      assert.equal(users[0].email, 'crm.contact@northwind.test');
+      assert.equal(provisionedEmailCount, 1);
+      assert.equal(users[0].mustChangePassword, true);
+    } finally {
+      emailService.clientUserProvisionedEmail = originalProvisionedEmail;
+    }
+  });
+
+  it('lists manually added and CRM-synced users together for their local company', async () => {
+    const synced = await syncCrmCustomer({
+      _id: 'crm-customer-users',
+      companyName: 'CRM Contoso',
+      contacts: [{
+        name: 'Synced Contact',
+        email: 'synced@contoso.test',
+        phone: '555-0100',
+        designation: 'Operations',
+      }],
+    });
+
+    const manuallyAdded = await request(app).post('/api/users')
+      .set('Authorization', auth(fixtures.admin))
+      .send({
+        companyId: String(synced.company._id),
+        name: 'Manually Added User',
+        email: 'manual@contoso.test',
+      });
+    assert.equal(manuallyAdded.status, 201);
+
+    const response = await request(app).get('/api/company-contacts')
+      .query({ companyId: String(synced.company._id) })
+      .set('Authorization', auth(fixtures.admin));
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      response.body.map(({ name, email }) => ({ name, email })).sort((a, b) => a.email.localeCompare(b.email)),
+      [
+        { name: 'Manually Added User', email: 'manual@contoso.test' },
+        { name: 'Synced Contact', email: 'synced@contoso.test' },
+      ],
+    );
   });
 
   it('skips reset emails for unverified and inactive users', async () => {
@@ -228,6 +442,12 @@ describe('API integration', () => {
       .send({
         ticketInfo: { priority: 'High', issueReported: 'Client-submitted issue', status: 'Closed' },
         companyInfo: { companyId: String(fixtures.otherCompany._id), companyName: 'Forged company' },
+        productInfo: {
+          productName: 'Company Laptop',
+          productDescription: 'Business laptop',
+          productModel: 'Model X',
+          productSerialNumber: 'SERIAL-123',
+        },
         assignment: { assignedTo: fixtures.staff.name },
         feedback: null,
         source: 'email',
@@ -242,6 +462,12 @@ describe('API integration', () => {
     assert.equal(response.body.assignment.assignedTo, '');
     assert.equal(response.body.feedback, undefined);
     assert.equal(String(response.body.requester), String(fixtures.client._id));
+    assert.deepEqual(response.body.productInfo, {
+      productName: 'Company Laptop',
+      productDescription: 'Business laptop',
+      productModel: 'Model X',
+      productSerialNumber: 'SERIAL-123',
+    });
   });
 
   it('enforces valid ticket status transitions', async () => {

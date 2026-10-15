@@ -16,6 +16,7 @@ const companyContactRoutes = require('./routes/companyContactRoutes');
 const userRoutes = require('./routes/userRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const staffRoutes = require('./routes/staffRoutes');
+const crmRoutes = require('./routes/crmRoutes');
 const { rejectDollarKeys } = require('./middleware/validate');
 const { handleSseConnection } = require('./services/eventStream');
 const logger = require('./utils/logger');
@@ -65,6 +66,7 @@ app.use('/api/company-contacts', companyContactRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/staff', staffRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/crm', crmRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 

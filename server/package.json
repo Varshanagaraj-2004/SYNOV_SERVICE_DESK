@@ -10,6 +10,9 @@
     "fix:user-companies": "node src/scripts/fixUserCompanies.js",
     "migrate:company-admins": "node src/scripts/backfillCompanyAdmins.js",
     "sync:crm": "node src/scripts/syncCrm.js",
+    "clear:assets": "node src/scripts/clearAssets.js",
+    "cleanup:stale-users": "node src/scripts/cleanupStaleClientUsers.js",
+    "reset-password": "node scripts/resetUserPassword.js",
     "test": "node --test"
   },
   "keywords": [],

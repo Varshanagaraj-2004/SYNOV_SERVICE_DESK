@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { Upload } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createTicket } from "../api/tickets";
-import { fetchAllAssets } from "../api/assets";
+import { fetchAllAssets, fetchInventoryAssets } from "../api/assets";
 import { fetchAllCompanies } from "../api/companies";
 import { fetchTechnicians } from "../api/technicians";
 import { useAuth } from "../context/useAuth";
@@ -61,6 +61,7 @@ export default function RaiseTicket() {
     companyName: loggedInCompanyName,
     companyId: loggedInCompanyId,
   } = useAuth();
+  const isClient = role === "client";
   const followUpTicket = location.state?.followUpTicket;
   const followUpIssue = followUpTicket
     ? [`Follow-up to ticket #${followUpTicket.ticketNumber}`, followUpTicket.issueTitle].filter(Boolean).join("\n")
@@ -72,8 +73,8 @@ export default function RaiseTicket() {
     queryFn: fetchAllCompanies,
   });
   const { data: assets = [], isLoading: assetsLoading, isError: assetsError } = useQuery({
-    queryKey: ["assets", "all-options"],
-    queryFn: fetchAllAssets,
+    queryKey: ["ticket-assets", role, loggedInCompanyId],
+    queryFn: isClient ? fetchInventoryAssets : fetchAllAssets,
   });
   const { data: technicians = [], isLoading: techniciansLoading, isError: techniciansError } = useQuery({
     queryKey: ["technicians", role === "admin" ? "assignable" : "default"],
@@ -129,10 +130,14 @@ export default function RaiseTicket() {
     });
   }
 
-  const visibleAssets = getVisibleAssets(assets, { role, companyId: loggedInCompanyId });
-  const companyAssets = activeCompanyId
-    ? visibleAssets.filter((asset) => String(asset.companyId) === String(activeCompanyId))
-    : [];
+  const visibleAssets = isClient
+    ? assets
+    : getVisibleAssets(assets, { role, companyId: loggedInCompanyId });
+  const companyAssets = isClient
+    ? visibleAssets
+    : activeCompanyId
+      ? visibleAssets.filter((asset) => String(asset.companyId) === String(activeCompanyId))
+      : [];
 
   const createMutation = useMutation({
     mutationFn: createTicket,
@@ -177,15 +182,25 @@ export default function RaiseTicket() {
     const serial = e.target.value;
     const asset = companyAssets.find((a) => a.serialNumber === serial);
     if (asset) {
+      const productName = asset.productName || asset.assetName || "";
       setForm({
         ...form,
         productSerialNumber: asset.serialNumber,
-        productName: asset.assetName,
-        productModel: asset.model,
-        productDescription: `${asset.type}${asset.configuration ? " — " + asset.configuration : ""}`,
+        productName,
+        productModel: asset.productModel || asset.model || "",
+        productDescription: asset.productDescription
+          || asset.description
+          || (asset.assetName ? `${asset.type || ""}${asset.configuration ? ` — ${asset.configuration}` : ""}`.trim() : "")
+          || productName,
       });
     } else {
-      setForm({ ...form, productSerialNumber: "" });
+      setForm({
+        ...form,
+        productSerialNumber: "",
+        productName: "",
+        productModel: "",
+        productDescription: "",
+      });
     }
   }
 
@@ -344,20 +359,27 @@ export default function RaiseTicket() {
           <div className="grid grid-cols-3 gap-4">
             <Field label="Product serial number">
               <select value={form.productSerialNumber} onChange={handleProductSelect} className={inputClass}>
-                <option value="">-- Select product Slno --</option>
+                <option value="" disabled={companyAssets.length === 0}>
+                  {companyAssets.length === 0
+                    ? "No assets assigned to your company"
+                    : "-- Select product Slno --"}
+                </option>
                 {companyAssets.map((a) => (
-                  <option key={a.serialNumber} value={a.serialNumber}>{a.serialNumber}</option>
+                  <option key={a.serialNumber} value={a.serialNumber}>
+                    {a.serialNumber} – {a.productName || a.assetName || "Product"}
+                    {(a.productModel || a.model) ? ` (${a.productModel || a.model})` : ""}
+                  </option>
                 ))}
               </select>
             </Field>
             <Field label="Product name">
-              <input name="productName" value={form.productName} onChange={handleChange} className={inputClass} placeholder="Auto-filled after selecting serial number" />
+              <input name="productName" value={form.productName} readOnly className={disabledClass} placeholder="Auto-filled after selecting serial number" />
             </Field>
             <Field label="Product model">
-              <input name="productModel" value={form.productModel} onChange={handleChange} className={inputClass} />
+              <input name="productModel" value={form.productModel} readOnly className={disabledClass} />
             </Field>
             <Field label="Product description">
-              <input name="productDescription" value={form.productDescription} onChange={handleChange} className={inputClass} />
+              <input name="productDescription" value={form.productDescription} readOnly className={disabledClass} />
             </Field>
           </div>
         </div>

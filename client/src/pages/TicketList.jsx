@@ -273,7 +273,16 @@ export default function TicketList({ companyId = null, hideHeader = false }) {
               return (
                 <tr
                   key={ticket._id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => navigate(`/tickets/${ticket._id}`)}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return;
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      navigate(`/tickets/${ticket._id}`);
+                    }
+                  }}
                   className="border-b border-surface-border last:border-0 hover:bg-surface-page cursor-pointer"
                 >
                 <td className="px-4 py-3 whitespace-nowrap text-text-primary">{ticket.ticketNumber || ticket._id}</td>
@@ -307,10 +316,11 @@ export default function TicketList({ companyId = null, hideHeader = false }) {
                 <td className="px-4 py-3 whitespace-nowrap text-text-secondary">
                   {new Date(ticket.ticketInfo.callLoggedDate).toLocaleDateString()}
                 </td>
-                <td className="px-4 py-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                <td className="px-4 py-3 whitespace-nowrap">
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={(event) => {
+                      event.stopPropagation();
                       setMessageText("");
                       setChatTicketId(ticket._id);
                       markReadMutation.mutate(ticket._id);
