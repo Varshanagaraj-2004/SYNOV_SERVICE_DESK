@@ -1,8 +1,11 @@
 import axios from "axios";
 import queryClient from "./queryClient";
 
+const apiUrl = import.meta.env.VITE_API_URL;
+if (!apiUrl) throw new Error("VITE_API_URL must be set in the client environment.");
+
 const axiosClient = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || "http://localhost:5000/api",
+  baseURL: apiUrl,
 });
 
 // Attaches the JWT (if we have one) to every outgoing request.
