@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-ro
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { ArrowLeft, KeyRound, LogOut } from "lucide-react";
 import Sidebar from "./components/Sidebar";
+import PasswordInput from "./components/PasswordInput";
 import RequireRole from "./components/RequireRole";
 import { useAuth } from "./context/useAuth";
 import Login from "./pages/Login";
@@ -218,15 +219,15 @@ function AppLayout({ children }) {
                 <>
                   <label className="block text-xs font-medium text-text-secondary">
                     Current Password
-                    <input type="password" name="current" value={passwordForm.current} onChange={handlePasswordChange} className="mt-1 w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none" />
+                    <PasswordInput name="current" value={passwordForm.current} onChange={handlePasswordChange} className="mt-1 w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none" />
                   </label>
                   <label className="block text-xs font-medium text-text-secondary">
                     New Password
-                    <input type="password" name="next" value={passwordForm.next} onChange={handlePasswordChange} className="mt-1 w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none" />
+                    <PasswordInput name="next" value={passwordForm.next} onChange={handlePasswordChange} className="mt-1 w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none" />
                   </label>
                   <label className="block text-xs font-medium text-text-secondary">
                     Confirm New Password
-                    <input type="password" name="confirm" value={passwordForm.confirm} onChange={handlePasswordChange} className="mt-1 w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none" />
+                    <PasswordInput name="confirm" value={passwordForm.confirm} onChange={handlePasswordChange} className="mt-1 w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none" />
                   </label>
                   <div className="flex justify-end gap-3 pt-2">
                     {!mustChangePassword && (

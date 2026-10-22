@@ -26,6 +26,7 @@ const logger = require('./utils/logger');
 const pinoHttp = require('pino-http');
 
 const app = express();
+app.set('trust proxy', 1);
 const extraAllowedOrigins = new Set((process.env.CORS_ORIGINS || '')
 	.split(',')
 	.map((origin) => origin.trim())

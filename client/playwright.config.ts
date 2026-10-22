@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const baseURL = 'http://127.0.0.1:5173';
-const apiHealthURL = 'http://127.0.0.1:5000/api/health';
+const apiHealthURL = 'http://127.0.0.1:5050/api/health';
 const testMongoUri = process.env.MONGO_URI_TEST;
 const testJwtSecret = process.env.JWT_SECRET || 'playwright-test-secret-at-least-32-characters';
 

@@ -5,7 +5,7 @@ import AuthContext from "./authContextStore";
 
 function getStoredAuth() {
   try {
-    const raw = localStorage.getItem("synov_auth");
+    const raw = sessionStorage.getItem("synov_auth");
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -28,7 +28,7 @@ function isTokenExpired(token) {
 export function AuthProvider({ children }) {
   const [initialSession] = useState(() => {
     const savedAuth = getStoredAuth();
-    const storedToken = localStorage.getItem("synov_token") || savedAuth?.token || null;
+    const storedToken = sessionStorage.getItem("synov_token") || savedAuth?.token || null;
     const expired = isTokenExpired(storedToken);
     return {
       savedAuth: expired ? null : savedAuth,
@@ -50,8 +50,8 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     if (!initialSession.expired) return;
-    localStorage.removeItem("synov_token");
-    localStorage.removeItem("synov_auth");
+    sessionStorage.removeItem("synov_token");
+    sessionStorage.removeItem("synov_auth");
     queryClient.clear();
   }, [initialSession.expired]);
 
@@ -68,8 +68,8 @@ export function AuthProvider({ children }) {
       mustChangePassword: nextUser.mustChangePassword === true,
     };
 
-    localStorage.setItem("synov_token", nextToken);
-    localStorage.setItem("synov_auth", JSON.stringify(payload));
+    sessionStorage.setItem("synov_token", nextToken);
+    sessionStorage.setItem("synov_auth", JSON.stringify(payload));
     return payload;
   }
 
@@ -101,8 +101,8 @@ export function AuthProvider({ children }) {
       setUserId(null);
       setCompanyId(null);
       setMustChangePassword(false);
-      localStorage.removeItem("synov_token");
-      localStorage.removeItem("synov_auth");
+      sessionStorage.removeItem("synov_token");
+      sessionStorage.removeItem("synov_auth");
       return false;
     }
   }
@@ -117,15 +117,15 @@ export function AuthProvider({ children }) {
     setCompanyId(null);
     setToken(null);
     setMustChangePassword(false);
-    localStorage.removeItem("synov_token");
-    localStorage.removeItem("synov_auth");
+    sessionStorage.removeItem("synov_token");
+    sessionStorage.removeItem("synov_auth");
     queryClient.clear();
   }
 
   function completePasswordChange(nextToken) {
     const saved = getStoredAuth() || {};
-    localStorage.setItem("synov_token", nextToken);
-    localStorage.setItem("synov_auth", JSON.stringify({ ...saved, token: nextToken, mustChangePassword: false }));
+    sessionStorage.setItem("synov_token", nextToken);
+    sessionStorage.setItem("synov_auth", JSON.stringify({ ...saved, token: nextToken, mustChangePassword: false }));
     setToken(nextToken);
     setMustChangePassword(false);
   }

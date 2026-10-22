@@ -6,6 +6,9 @@ import queryClient from "./api/queryClient";
 import App from "./App.jsx";
 import "./index.css";
 
+localStorage.removeItem("synov_token");
+localStorage.removeItem("synov_auth");
+
 createRoot(document.getElementById("root")).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>

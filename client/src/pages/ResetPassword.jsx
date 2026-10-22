@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import synovLogo from "../assets/synov_it_services_pvt_ltd_logo.jpg";
 import { resetPassword } from "../api/auth";
+import PasswordInput from "../components/PasswordInput";
 
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();
@@ -57,9 +58,8 @@ export default function ResetPassword() {
               {!token && <p role="alert" className="text-sm text-status-critical">This reset link is missing its token.</p>}
               <div>
                 <label htmlFor="new-password" className="text-xs text-text-secondary">New password</label>
-                <input
+                <PasswordInput
                   id="new-password"
-                  type="password"
                   autoComplete="new-password"
                   minLength={8}
                   required
@@ -70,9 +70,8 @@ export default function ResetPassword() {
               </div>
               <div>
                 <label htmlFor="confirm-password" className="text-xs text-text-secondary">Confirm password</label>
-                <input
+                <PasswordInput
                   id="confirm-password"
-                  type="password"
                   autoComplete="new-password"
                   minLength={8}
                   required
