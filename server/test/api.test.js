@@ -19,8 +19,13 @@ process.env.IMAP_REQUIRE_AUTH_RESULTS = 'false';
 process.env.IMAP_HOST = 'imap.test';
 process.env.IMAP_USER = 'test-user';
 process.env.IMAP_PASS = 'test-password';
+process.env.INVENTORY_ASSETS_PATH = '/api/inventory/assets';
+process.env.INVENTORY_LOGIN_PATH = '/api/inventory/auth/login';
+process.env.INVENTORY_SERVICE_EMAIL = 'inventory-test@example.test';
+process.env.INVENTORY_SERVICE_PASSWORD = 'inventory-test-password';
 
 const app = require('../src/app');
+const logger = require('../src/utils/logger');
 const Company = require('../src/models/Company');
 const CompanyContact = require('../src/models/CompanyContact');
 const Counter = require('../src/models/Counter');
@@ -44,6 +49,20 @@ let fixtures;
 
 function auth(user) {
   return `Bearer ${jwt.sign({ id: String(user._id) }, process.env.JWT_SECRET, { expiresIn: '1h' })}`;
+}
+
+function inventoryFetch(assetsRequest) {
+  return async (input, options) => {
+    const url = new URL(input);
+    if (url.pathname === process.env.INVENTORY_LOGIN_PATH) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ token: 'inventory-test-token' }),
+      };
+    }
+    return assetsRequest(url, options);
+  };
 }
 
 async function createTicket({ company, requester, status = 'New', assignedTo = '' }) {
@@ -138,7 +157,7 @@ describe('API integration', () => {
       { assetId: 'contoso-rented', customerId: 'crm-contoso', status: 'rented' },
       { assetId: 'warehouse-stock', status: 'available' },
     ];
-    global.fetch = async () => ({ ok: true, status: 200, json: async () => inventory });
+    global.fetch = inventoryFetch(async () => ({ ok: true, status: 200, json: async () => inventory }));
 
     try {
       const northwind = await request(app)
@@ -182,11 +201,11 @@ describe('API integration', () => {
       passwordHash: await bcrypt.hash(password, 4),
       role: 'client',
     });
-    global.fetch = async () => ({
+    global.fetch = inventoryFetch(async () => ({
       ok: true,
       status: 200,
       json: async () => [{ assetId: 'northwind-rented', customerName: 'Northwind', status: 'rented' }],
-    });
+    }));
 
     try {
       const unmatched = await request(app)
@@ -215,7 +234,7 @@ describe('API integration', () => {
       { assetId: 'warehouse-stock', status: 'available', purchaseCost: 1000 },
       { assetId: 'contoso-rented', customerName: 'Contoso', status: 'rented' },
     ];
-    global.fetch = async () => ({ ok: true, status: 200, json: async () => inventory });
+    global.fetch = inventoryFetch(async () => ({ ok: true, status: 200, json: async () => inventory }));
     const otherAsset = await Asset.create({
       assetName: 'Contoso Laptop',
       serialNumber: 'CONTOSO-1',
@@ -237,6 +256,284 @@ describe('API integration', () => {
       global.fetch = originalFetch;
       if (originalInventoryUrl === undefined) delete process.env.INVENTORY_API_URL;
       else process.env.INVENTORY_API_URL = originalInventoryUrl;
+    }
+  });
+
+  it('returns readable machine reasons for inventory service failures', async () => {
+    const originalFetch = global.fetch;
+    const originalInventoryUrl = process.env.INVENTORY_API_URL;
+    process.env.INVENTORY_API_URL = 'https://inventory.test:9443';
+    const failures = [
+      { code: 'ECONNREFUSED', reason: 'connection_refused' },
+      { code: 'ETIMEDOUT', reason: 'timeout' },
+      { code: 'ENOTFOUND', reason: 'host_not_found' },
+    ];
+
+    try {
+      for (const failure of failures) {
+        global.fetch = inventoryFetch(async () => {
+          const error = new Error('Upstream connection failed');
+          error.code = failure.code;
+          throw error;
+        });
+
+        const response = await request(app)
+          .get('/api/crm/inventory-assets')
+          .set('Authorization', auth(fixtures.admin));
+        assert.equal(response.status, 502);
+        assert.deepEqual(response.body, {
+          error: 'Could not reach the Inventory service',
+          reason: failure.reason,
+        });
+      }
+
+      global.fetch = inventoryFetch(async () => ({ ok: false, status: 503 }));
+      const badResponse = await request(app)
+        .get('/api/crm/inventory-assets')
+        .set('Authorization', auth(fixtures.admin));
+      assert.equal(badResponse.status, 502);
+      assert.deepEqual(badResponse.body, {
+        error: 'Could not reach the Inventory service',
+        reason: 'bad_response',
+      });
+    } finally {
+      global.fetch = originalFetch;
+      if (originalInventoryUrl === undefined) delete process.env.INVENTORY_API_URL;
+      else process.env.INVENTORY_API_URL = originalInventoryUrl;
+    }
+  });
+
+  it('logs structured details for Inventory HTTP and network failures', async () => {
+    const originalFetch = global.fetch;
+    const originalInventoryUrl = process.env.INVENTORY_API_URL;
+    const originalLoggerError = logger.error;
+    const logs = [];
+    process.env.INVENTORY_API_URL = 'https://inventory.test:9443';
+    logger.error = (fields, message) => logs.push({ fields, message });
+
+    try {
+      global.fetch = inventoryFetch(async () => ({
+        ok: false,
+        status: 503,
+        text: async () => '{"error":"maintenance"}',
+      }));
+      const httpFailure = await request(app)
+        .get('/api/crm/inventory-assets?status=rented')
+        .set('Authorization', auth(fixtures.admin));
+
+      assert.equal(httpFailure.status, 502);
+      assert.deepEqual(httpFailure.body, {
+        error: 'Could not reach the Inventory service',
+        reason: 'bad_response',
+      });
+      assert.deepEqual(logs[0].fields, {
+        route: 'GET /api/crm/inventory-assets',
+        url: 'https://inventory.test:9443/api/inventory/assets?status=rented',
+        method: 'GET',
+        errorCode: 'HTTP_503',
+        causeCode: 'HTTP_503',
+        upstreamStatus: 503,
+        upstreamResponseBody: '{"error":"maintenance"}',
+        errorMessage: 'Inventory request failed with status 503',
+        authHeaderAttached: true,
+        apiKeyAttached: false,
+        failureType: 'upstream_http_error',
+        targetHost: 'inventory.test',
+        targetPort: 9443,
+        reason: 'bad_response',
+      });
+
+      global.fetch = inventoryFetch(async () => {
+        const error = new Error('Inventory connection failed');
+        error.code = 'ECONNREFUSED';
+        throw error;
+      });
+      const networkFailure = await request(app)
+        .get('/api/crm/inventory-assets')
+        .set('Authorization', auth(fixtures.admin));
+
+      assert.equal(networkFailure.status, 502);
+      assert.deepEqual(networkFailure.body, {
+        error: 'Could not reach the Inventory service',
+        reason: 'connection_refused',
+      });
+      assert.equal(logs[1].fields.failureType, 'network_error');
+      assert.equal(logs[1].fields.errorCode, 'ECONNREFUSED');
+      assert.equal(logs[1].fields.upstreamStatus, null);
+      assert.equal(logs[1].fields.upstreamResponseBody, null);
+    } finally {
+      global.fetch = originalFetch;
+      logger.error = originalLoggerError;
+      if (originalInventoryUrl === undefined) delete process.env.INVENTORY_API_URL;
+      else process.env.INVENTORY_API_URL = originalInventoryUrl;
+    }
+  });
+
+  it('authenticates Inventory requests, retries one 401, and reuses the refreshed token', async () => {
+    const originalFetch = global.fetch;
+    const originalInventoryUrl = process.env.INVENTORY_API_URL;
+    process.env.INVENTORY_API_URL = 'https://inventory-auth.test:9443';
+    const tokens = ['inventory-token-one', 'inventory-token-two'];
+    const loginCalls = [];
+    const assetCalls = [];
+    global.fetch = async (input, options) => {
+      const url = new URL(input);
+      if (url.pathname === process.env.INVENTORY_LOGIN_PATH) {
+        loginCalls.push({ url: url.toString(), options });
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ token: tokens[loginCalls.length - 1] }),
+        };
+      }
+
+      assetCalls.push({ url: url.toString(), options });
+      if (assetCalls.length === 1) {
+        return { ok: false, status: 401, text: async () => '{"error":"sign-in required"}' };
+      }
+      return { ok: true, status: 200, json: async () => [{ assetId: 'asset-1' }] };
+    };
+
+    try {
+      const first = await request(app)
+        .get('/api/crm/inventory-assets?status=rented')
+        .set('Authorization', auth(fixtures.admin));
+      const second = await request(app)
+        .get('/api/crm/inventory-assets')
+        .set('Authorization', auth(fixtures.admin));
+
+      assert.equal(first.status, 200);
+      assert.equal(second.status, 200);
+      assert.deepEqual(first.body, [{ assetId: 'asset-1' }]);
+      assert.equal(loginCalls.length, 2);
+      assert.equal(assetCalls.length, 3);
+      assert.deepEqual(assetCalls.map(({ options }) => options.headers.Authorization), [
+        'Bearer inventory-token-one',
+        'Bearer inventory-token-two',
+        'Bearer inventory-token-two',
+      ]);
+      assert.equal(assetCalls[0].url, 'https://inventory-auth.test:9443/api/inventory/assets?status=rented');
+      assert.equal(loginCalls[0].options.method, 'POST');
+      assert.equal(loginCalls[0].options.headers['Content-Type'], 'application/json');
+      assert.deepEqual(JSON.parse(loginCalls[0].options.body), {
+        email: 'inventory-test@example.test',
+        password: 'inventory-test-password',
+      });
+    } finally {
+      global.fetch = originalFetch;
+      if (originalInventoryUrl === undefined) delete process.env.INVENTORY_API_URL;
+      else process.env.INVENTORY_API_URL = originalInventoryUrl;
+    }
+  });
+
+  it('shares an in-flight Inventory login between concurrent asset requests', async () => {
+    const originalFetch = global.fetch;
+    const originalInventoryUrl = process.env.INVENTORY_API_URL;
+    process.env.INVENTORY_API_URL = 'https://inventory-concurrent.test';
+    let loginCalls = 0;
+    global.fetch = async (input) => {
+      const url = new URL(input);
+      if (url.pathname === process.env.INVENTORY_LOGIN_PATH) {
+        loginCalls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return { ok: true, status: 200, json: async () => ({ token: 'concurrent-token' }) };
+      }
+      return { ok: true, status: 200, json: async () => [] };
+    };
+
+    try {
+      const responses = await Promise.all([
+        request(app).get('/api/crm/inventory-assets').set('Authorization', auth(fixtures.admin)),
+        request(app).get('/api/crm/inventory-assets').set('Authorization', auth(fixtures.admin)),
+      ]);
+      assert.deepEqual(responses.map(({ status }) => status), [200, 200]);
+      assert.equal(loginCalls, 1);
+    } finally {
+      global.fetch = originalFetch;
+      if (originalInventoryUrl === undefined) delete process.env.INVENTORY_API_URL;
+      else process.env.INVENTORY_API_URL = originalInventoryUrl;
+    }
+  });
+
+  it('returns inventory_auth_failed and logs login errors without credentials or tokens', async () => {
+    const originalFetch = global.fetch;
+    const originalInventoryUrl = process.env.INVENTORY_API_URL;
+    const originalLoggerError = logger.error;
+    const logs = [];
+    process.env.INVENTORY_API_URL = 'https://inventory-login-failure.test';
+    logger.error = (fields, message) => logs.push({ fields, message });
+    global.fetch = async () => ({
+      ok: false,
+      status: 401,
+      json: async () => ({ error: 'sign-in required' }),
+    });
+
+    try {
+      const response = await request(app)
+        .get('/api/crm/inventory-assets')
+        .set('Authorization', auth(fixtures.admin));
+      assert.equal(response.status, 502);
+      assert.deepEqual(response.body, {
+        error: 'Could not reach the Inventory service',
+        reason: 'inventory_auth_failed',
+      });
+      assert.equal(logs.length, 1);
+      assert.equal(logs[0].message, 'Inventory service login failed');
+      assert.equal(logs[0].fields.failureType, 'inventory_login_failure');
+      assert.equal(logs[0].fields.authHeaderAttached, false);
+      assert.equal(JSON.stringify(logs).includes('inventory-test-password'), false);
+      assert.equal(JSON.stringify(logs).includes('inventory-token'), false);
+    } finally {
+      global.fetch = originalFetch;
+      logger.error = originalLoggerError;
+      if (originalInventoryUrl === undefined) delete process.env.INVENTORY_API_URL;
+      else process.env.INVENTORY_API_URL = originalInventoryUrl;
+    }
+  });
+
+  it('restricts dependency health checks to admins and does not return configured URLs', async () => {
+    const originalFetch = global.fetch;
+    const originalInventoryUrl = process.env.INVENTORY_API_URL;
+    const originalCrmUrl = process.env.CRM_LOGIN_URL;
+    process.env.INVENTORY_API_URL = 'https://inventory.test:9443';
+    process.env.CRM_LOGIN_URL = 'https://health-user:health-password@crm.test/login';
+    const calls = [];
+    global.fetch = async (url, options) => {
+      calls.push({
+        hostname: new URL(url).hostname,
+        pathname: new URL(url).pathname,
+        method: options.method,
+      });
+      return { status: calls.length === 1 ? 401 : 503 };
+    };
+
+    try {
+      const unauthenticated = await request(app).get('/api/crm/health');
+      const clientResponse = await request(app)
+        .get('/api/crm/health')
+        .set('Authorization', auth(fixtures.client));
+      const adminResponse = await request(app)
+        .get('/api/crm/health')
+        .set('Authorization', auth(fixtures.admin));
+
+      assert.equal(unauthenticated.status, 401);
+      assert.equal(clientResponse.status, 403);
+      assert.equal(adminResponse.status, 200);
+      assert.deepEqual(adminResponse.body, {
+        inventory: { reachable: false, status: 401, reason: 'path_not_verified' },
+        crm: { reachable: true, status: 503 },
+      });
+      assert.deepEqual(calls, [
+        { hostname: 'inventory.test', pathname: '/api/inventory/assets', method: 'HEAD' },
+        { hostname: 'crm.test', pathname: '/login', method: 'HEAD' },
+      ]);
+      assert.equal(JSON.stringify(adminResponse.body).includes('health-password'), false);
+    } finally {
+      global.fetch = originalFetch;
+      if (originalInventoryUrl === undefined) delete process.env.INVENTORY_API_URL;
+      else process.env.INVENTORY_API_URL = originalInventoryUrl;
+      if (originalCrmUrl === undefined) delete process.env.CRM_LOGIN_URL;
+      else process.env.CRM_LOGIN_URL = originalCrmUrl;
     }
   });
 

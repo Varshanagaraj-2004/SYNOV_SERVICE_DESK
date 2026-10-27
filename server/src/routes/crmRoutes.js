@@ -3,11 +3,47 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { getCustomers } = require('../services/crmClient');
 const Company = require('../models/Company');
 const { getClientVisibleInventory } = require('../services/inventoryAccess');
+const { getAssets, inventoryUrl } = require('../services/inventoryClient');
 const { crmCustomerId, syncCrmCustomer } = require('../services/crmUserSync');
 const logger = require('../utils/logger');
 const { getUpstreamErrorDetails, wrapUpstreamError } = require('../utils/upstreamError');
 
 const router = express.Router();
+const HEALTH_TIMEOUT_MS = 3_000;
+
+function upstreamFailureReason(error, details) {
+  const code = details.causeCode || error?.code;
+  if (code === 'ECONNREFUSED') return 'connection_refused';
+  if (code === 'ETIMEDOUT' || details.reason === 'timeout' || error?.name === 'TimeoutError') {
+    return 'timeout';
+  }
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'host_not_found';
+  return 'bad_response';
+}
+
+async function checkDependency(urlValue, requireSuccessfulStatus = false) {
+  if (!urlValue) return { reachable: false, reason: 'not_configured' };
+
+  try {
+    const response = await fetch(urlValue, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+    });
+    if (requireSuccessfulStatus && (response.status < 200 || response.status >= 300)) {
+      return {
+        reachable: false,
+        status: response.status,
+        reason: [401, 404, 405].includes(response.status) ? 'path_not_verified' : 'bad_response',
+      };
+    }
+    return { reachable: true, status: response.status };
+  } catch (error) {
+    return {
+      reachable: false,
+      reason: upstreamFailureReason(error, getUpstreamErrorDetails(error, urlValue)),
+    };
+  }
+}
 
 function customerRows(response) {
   if (Array.isArray(response)) return response;
@@ -103,8 +139,21 @@ router.post('/customers/:crmId/sync', requireAuth, requireRole('admin'), async (
   }
 });
 
+router.get('/health', requireAuth, requireRole('admin'), async (req, res) => {
+  const [inventory, crm] = await Promise.all([
+    checkDependency(
+      process.env.INVENTORY_API_URL
+        ? inventoryUrl('INVENTORY_ASSETS_PATH', '/api/inventory/assets').toString()
+        : undefined,
+      true,
+    ),
+    checkDependency(process.env.CRM_LOGIN_URL),
+  ]);
+  return res.json({ inventory, crm });
+});
+
 router.get('/inventory-assets', requireAuth, async (req, res) => {
-  let inventoryApiUrl;
+  let upstreamUrl;
   try {
     let clientCompany;
     if (req.user.role === 'client') {
@@ -115,24 +164,12 @@ router.get('/inventory-assets', requireAuth, async (req, res) => {
       if (!clientCompany) return res.json([]);
     }
 
-    inventoryApiUrl = process.env.INVENTORY_API_URL;
-    if (!inventoryApiUrl) throw new Error('INVENTORY_API_URL is not configured');
-
-    const inventoryUrl = new URL(`${inventoryApiUrl.replace(/\/+$/, '')}/assets`);
-
+    upstreamUrl = inventoryUrl('INVENTORY_ASSETS_PATH', '/api/inventory/assets');
     if (typeof req.query.status === 'string') {
-      inventoryUrl.searchParams.set('status', req.query.status);
+      upstreamUrl.searchParams.set('status', req.query.status);
     }
 
-    const response = await fetch(inventoryUrl, {
-      signal: AbortSignal.timeout(10_000),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Inventory request failed with status ${response.status}`);
-    }
-
-    const inventory = await response.json();
+    const inventory = await getAssets(upstreamUrl);
     if (req.user.role !== 'client') return res.json(inventory);
 
     const rows = Array.isArray(inventory)
@@ -142,12 +179,33 @@ router.get('/inventory-assets', requireAuth, async (req, res) => {
         .find(Array.isArray) || [];
     return res.json(getClientVisibleInventory(clientCompany, rows));
   } catch (error) {
-    const upstreamError = wrapUpstreamError(error, inventoryApiUrl);
-    const details = getUpstreamErrorDetails(upstreamError, inventoryApiUrl);
-    logger.error(details, 'Could not reach the Inventory service');
+    const reason = error?.reason || upstreamFailureReason(
+      error,
+      getUpstreamErrorDetails(error, upstreamUrl?.toString()),
+    );
+    if (!error?.inventoryLogged && error?.stage !== 'login') {
+      const details = getUpstreamErrorDetails(
+        wrapUpstreamError(error, upstreamUrl?.toString()),
+        upstreamUrl?.toString(),
+      );
+      logger.error({
+        route: 'GET /api/crm/inventory-assets',
+        url: upstreamUrl?.toString() || null,
+        method: 'GET',
+        errorCode: error?.code || null,
+        causeCode: details.causeCode,
+        upstreamStatus: error?.response?.status || null,
+        upstreamResponseBody: error?.response?.data ?? null,
+        errorMessage: error?.message || null,
+        authHeaderAttached: Boolean(upstreamUrl),
+        apiKeyAttached: false,
+        failureType: error?.isUpstreamHttpError ? 'upstream_http_error' : 'request_error',
+        reason,
+      }, 'Inventory service assets request failed');
+    }
     return res.status(502).json({
       error: 'Could not reach the Inventory service',
-      reason: details.reason,
+      reason: error?.stage === 'login' ? 'inventory_auth_failed' : reason,
     });
   }
 });
